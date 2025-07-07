@@ -1,0 +1,93 @@
+import { createClient } from "@supabase/supabase-js"
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+
+if (!supabaseUrl || !supabaseKey) {
+  throw new Error("Missing Supabase environment variables")
+}
+
+export const supabase = createClient(supabaseUrl, supabaseKey)
+
+// Tipos para la base de datos
+export interface Message {
+  id: string
+  username: string
+  message: string
+  timestamp: string
+  created_at?: string
+}
+
+export interface Note {
+  id: string
+  from_user: string
+  to_user: string
+  title: string
+  content: string
+  read: boolean
+  timestamp: string
+  created_at?: string
+}
+
+export interface MoodEntry {
+  id: string
+  username: string
+  mood: string
+  note: string
+  date: string
+  timestamp: string
+  created_at?: string
+}
+
+export interface WishItem {
+  id: string
+  title: string
+  description: string
+  category: string
+  priority: string
+  completed: boolean
+  created_by: string
+  completed_date?: string
+  timestamp: string
+  created_at?: string
+}
+
+export interface Event {
+  id: string
+  title: string
+  description: string
+  date: string
+  type: string
+  created_by: string
+  timestamp: string
+  created_at?: string
+}
+
+export interface Question {
+  id: string
+  question: string
+  answer: string
+  created_by: string
+  attempts: number
+  correct_guesses: number
+  timestamp: string
+  created_at?: string
+}
+
+export interface Photo {
+  id: string
+  url: string
+  title: string
+  note: string
+  uploaded_by: string
+  timestamp: string
+  created_at?: string
+}
+
+export interface RelationshipTimer {
+  id: string
+  username: string
+  start_date: string
+  timestamp: string
+  created_at?: string
+}

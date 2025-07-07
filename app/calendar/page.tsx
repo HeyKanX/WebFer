@@ -7,22 +7,21 @@ import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowLeft, Plus, CalendarIcon, Heart, Trash2, ChevronLeft, ChevronRight } from "lucide-react"
 import { useRouter } from "next/navigation"
+import { supabase, type Event } from "@/lib/supabase"
 
-interface Event {
-  id: string
-  title: string
-  description: string
-  date: string
-  type: "anniversary" | "date" | "special" | "reminder"
-  createdBy: string
-}
+const categories = [
+  { value: "anniversary", label: "💕 Aniversario", color: "bg-pink-500" },
+  { value: "date", label: "💜 Cita", color: "bg-purple-500" },
+  { value: "special", label: "✨ Momento Especial", color: "bg-blue-500" },
+  { value: "reminder", label: "⏰ Recordatorio", color: "bg-yellow-500" },
+]
 
 export default function CalendarPage() {
   const [events, setEvents] = useState<Event[]>([])
   const [currentUser, setCurrentUser] = useState("")
   const [showAddEvent, setShowAddEvent] = useState(false)
   const [currentDate, setCurrentDate] = useState(new Date())
-  const [selectedDate, setSelectedDate] = useState<string>("")
+  const [loading, setLoading] = useState(true)
   const [newEvent, setNewEvent] = useState({
     title: "",
     description: "",
@@ -38,38 +37,68 @@ export default function CalendarPage() {
       return
     }
     setCurrentUser(user)
+    loadEvents()
 
-    // Cargar eventos del localStorage
-    const savedEvents = localStorage.getItem("loveEvents")
-    if (savedEvents) {
-      setEvents(JSON.parse(savedEvents))
+    // Suscribirse a cambios en tiempo real
+    const subscription = supabase
+      .channel("events")
+      .on("postgres_changes", { event: "*", schema: "public", table: "events" }, () => {
+        loadEvents()
+      })
+      .subscribe()
+
+    return () => {
+      subscription.unsubscribe()
     }
   }, [router])
 
-  const addEvent = () => {
+  const loadEvents = async () => {
+    try {
+      const { data, error } = await supabase.from("events").select("*").order("date", { ascending: true })
+
+      if (error) throw error
+      setEvents(data || [])
+    } catch (error) {
+      console.error("Error loading events:", error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const addEvent = async () => {
     if (!newEvent.title.trim() || !newEvent.date) return
 
-    const event: Event = {
-      id: Date.now().toString(),
+    const event: Omit<Event, "id" | "created_at"> = {
       title: newEvent.title,
       description: newEvent.description,
       date: newEvent.date,
       type: newEvent.type,
-      createdBy: currentUser,
+      created_by: currentUser,
+      timestamp: new Date().toISOString(),
     }
 
-    const updatedEvents = [...events, event]
-    setEvents(updatedEvents)
-    localStorage.setItem("loveEvents", JSON.stringify(updatedEvents))
+    try {
+      const { error } = await supabase.from("events").insert([event])
 
-    setNewEvent({ title: "", description: "", date: "", type: "special" })
-    setShowAddEvent(false)
+      if (error) throw error
+
+      setNewEvent({ title: "", description: "", date: "", type: "special" })
+      setShowAddEvent(false)
+    } catch (error) {
+      console.error("Error adding event:", error)
+      alert("Error al agregar evento")
+    }
   }
 
-  const deleteEvent = (eventId: string) => {
-    const updatedEvents = events.filter((event) => event.id !== eventId)
-    setEvents(updatedEvents)
-    localStorage.setItem("loveEvents", JSON.stringify(updatedEvents))
+  const deleteEvent = async (eventId: string) => {
+    try {
+      const { error } = await supabase.from("events").delete().eq("id", eventId)
+
+      if (error) throw error
+    } catch (error) {
+      console.error("Error deleting event:", error)
+      alert("Error al eliminar evento")
+    }
   }
 
   const getDaysInMonth = (date: Date) => {
@@ -89,18 +118,8 @@ export default function CalendarPage() {
   }
 
   const getEventTypeColor = (type: Event["type"]) => {
-    switch (type) {
-      case "anniversary":
-        return "bg-pink-500"
-      case "date":
-        return "bg-purple-500"
-      case "special":
-        return "bg-blue-500"
-      case "reminder":
-        return "bg-yellow-500"
-      default:
-        return "bg-purple-500"
-    }
+    const category = categories.find((cat) => cat.value === type)
+    return category?.color || "bg-purple-500"
   }
 
   const getEventTypeEmoji = (type: Event["type"]) => {
@@ -164,7 +183,6 @@ export default function CalendarPage() {
             isToday ? "bg-purple-600/30 border-purple-400" : ""
           }`}
           onClick={() => {
-            setSelectedDate(dateStr)
             setNewEvent({ ...newEvent, date: dateStr })
             setShowAddEvent(true)
           }}
@@ -191,6 +209,14 @@ export default function CalendarPage() {
 
   const getUserDisplayName = (user: string) => {
     return user === "fernanda" ? "Fernanda" : "Heykan"
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-black via-purple-900 to-black flex items-center justify-center">
+        <div className="text-white text-lg">Cargando calendario... 💜</div>
+      </div>
+    )
   }
 
   return (
@@ -253,10 +279,11 @@ export default function CalendarPage() {
                   onChange={(e) => setNewEvent({ ...newEvent, type: e.target.value as Event["type"] })}
                   className="w-full p-2 bg-purple-900/30 border border-purple-500/50 text-white rounded-md"
                 >
-                  <option value="special">✨ Momento Especial</option>
-                  <option value="anniversary">💕 Aniversario</option>
-                  <option value="date">💜 Cita</option>
-                  <option value="reminder">⏰ Recordatorio</option>
+                  {categories.map((cat) => (
+                    <option key={cat.value} value={cat.value}>
+                      {cat.label}
+                    </option>
+                  ))}
                 </select>
                 <div className="flex space-x-2">
                   <Button onClick={addEvent} className="flex-1 bg-purple-600 hover:bg-purple-700">
@@ -357,7 +384,7 @@ export default function CalendarPage() {
                               day: "numeric",
                             })}
                           </span>
-                          <span>Por: {getUserDisplayName(event.createdBy)}</span>
+                          <span>Por: {getUserDisplayName(event.created_by)}</span>
                         </div>
                       </div>
                       <Button

@@ -7,18 +7,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowLeft, Plus, Star, Heart, Check, Trash2 } from "lucide-react"
 import { useRouter } from "next/navigation"
-
-interface WishItem {
-  id: string
-  title: string
-  description: string
-  category: "travel" | "activity" | "gift" | "experience" | "goal"
-  priority: "low" | "medium" | "high"
-  completed: boolean
-  createdBy: string
-  completedDate?: Date
-  timestamp: Date
-}
+import { supabase, type WishItem } from "@/lib/supabase"
 
 const categories = [
   { value: "travel", label: "✈️ Viajes", color: "bg-blue-500" },
@@ -40,6 +29,7 @@ export default function WishlistPage() {
   const [showAddWish, setShowAddWish] = useState(false)
   const [filter, setFilter] = useState<"all" | "pending" | "completed">("all")
   const [categoryFilter, setCategoryFilter] = useState<string>("all")
+  const [loading, setLoading] = useState(true)
   const [newWish, setNewWish] = useState({
     title: "",
     description: "",
@@ -55,54 +45,90 @@ export default function WishlistPage() {
       return
     }
     setCurrentUser(user)
+    loadWishes()
 
-    // Cargar lista de deseos del localStorage
-    const savedWishes = localStorage.getItem("loveWishlist")
-    if (savedWishes) {
-      setWishes(JSON.parse(savedWishes))
+    // Suscribirse a cambios en tiempo real
+    const subscription = supabase
+      .channel("wishlist")
+      .on("postgres_changes", { event: "*", schema: "public", table: "wishlist" }, () => {
+        loadWishes()
+      })
+      .subscribe()
+
+    return () => {
+      subscription.unsubscribe()
     }
   }, [router])
 
-  const addWish = () => {
+  const loadWishes = async () => {
+    try {
+      const { data, error } = await supabase.from("wishlist").select("*").order("timestamp", { ascending: false })
+
+      if (error) throw error
+      setWishes(data || [])
+    } catch (error) {
+      console.error("Error loading wishes:", error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const addWish = async () => {
     if (!newWish.title.trim()) return
 
-    const wish: WishItem = {
-      id: Date.now().toString(),
+    const wish: Omit<WishItem, "id" | "created_at"> = {
       title: newWish.title,
       description: newWish.description,
       category: newWish.category,
       priority: newWish.priority,
       completed: false,
-      createdBy: currentUser,
-      timestamp: new Date(),
+      created_by: currentUser,
+      timestamp: new Date().toISOString(),
     }
 
-    const updatedWishes = [...wishes, wish]
-    setWishes(updatedWishes)
-    localStorage.setItem("loveWishlist", JSON.stringify(updatedWishes))
+    try {
+      const { error } = await supabase.from("wishlist").insert([wish])
 
-    setNewWish({ title: "", description: "", category: "experience", priority: "medium" })
-    setShowAddWish(false)
+      if (error) throw error
+
+      setNewWish({ title: "", description: "", category: "experience", priority: "medium" })
+      setShowAddWish(false)
+    } catch (error) {
+      console.error("Error adding wish:", error)
+      alert("Error al agregar deseo")
+    }
   }
 
-  const toggleCompleted = (wishId: string) => {
-    const updatedWishes = wishes.map((wish) =>
-      wish.id === wishId
-        ? {
-            ...wish,
-            completed: !wish.completed,
-            completedDate: !wish.completed ? new Date() : undefined,
-          }
-        : wish,
-    )
-    setWishes(updatedWishes)
-    localStorage.setItem("loveWishlist", JSON.stringify(updatedWishes))
+  const toggleCompleted = async (wishId: string, completed: boolean) => {
+    try {
+      const updateData: any = {
+        completed: !completed,
+      }
+
+      if (!completed) {
+        updateData.completed_date = new Date().toISOString()
+      } else {
+        updateData.completed_date = null
+      }
+
+      const { error } = await supabase.from("wishlist").update(updateData).eq("id", wishId)
+
+      if (error) throw error
+    } catch (error) {
+      console.error("Error updating wish:", error)
+      alert("Error al actualizar deseo")
+    }
   }
 
-  const deleteWish = (wishId: string) => {
-    const updatedWishes = wishes.filter((wish) => wish.id !== wishId)
-    setWishes(updatedWishes)
-    localStorage.setItem("loveWishlist", JSON.stringify(updatedWishes))
+  const deleteWish = async (wishId: string) => {
+    try {
+      const { error } = await supabase.from("wishlist").delete().eq("id", wishId)
+
+      if (error) throw error
+    } catch (error) {
+      console.error("Error deleting wish:", error)
+      alert("Error al eliminar deseo")
+    }
   }
 
   const getUserDisplayName = (user: string) => {
@@ -128,6 +154,14 @@ export default function WishlistPage() {
 
   const completedCount = wishes.filter((w) => w.completed).length
   const totalCount = wishes.length
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-black via-purple-900 to-black flex items-center justify-center">
+        <div className="text-white text-lg">Cargando lista de deseos... 💜</div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-black via-purple-900 to-black">
@@ -354,7 +388,7 @@ export default function WishlistPage() {
                       </div>
                       <div className="flex space-x-1">
                         <Button
-                          onClick={() => toggleCompleted(wish.id)}
+                          onClick={() => toggleCompleted(wish.id, wish.completed)}
                           size="sm"
                           variant="ghost"
                           className={`${
@@ -380,13 +414,13 @@ export default function WishlistPage() {
                     {wish.description && <p className="text-purple-200 mb-4">{wish.description}</p>}
 
                     <div className="flex items-center justify-between text-sm text-purple-300">
-                      <span>Por: {getUserDisplayName(wish.createdBy)}</span>
+                      <span>Por: {getUserDisplayName(wish.created_by)}</span>
                       <span>{new Date(wish.timestamp).toLocaleDateString()}</span>
                     </div>
 
-                    {wish.completed && wish.completedDate && (
+                    {wish.completed && wish.completed_date && (
                       <div className="mt-2 text-sm text-green-400">
-                        ✅ Cumplido el {new Date(wish.completedDate).toLocaleDateString()}
+                        ✅ Cumplido el {new Date(wish.completed_date).toLocaleDateString()}
                       </div>
                     )}
                   </CardContent>

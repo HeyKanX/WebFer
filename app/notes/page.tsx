@@ -7,16 +7,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowLeft, Plus, Heart, StickyNote, Trash2 } from "lucide-react"
 import { useRouter } from "next/navigation"
-
-interface Note {
-  id: string
-  from: string
-  to: string
-  title: string
-  content: string
-  timestamp: Date
-  read: boolean
-}
+import { supabase, type Note } from "@/lib/supabase"
 
 export default function NotesPage() {
   const [notes, setNotes] = useState<Note[]>([])
@@ -24,6 +15,7 @@ export default function NotesPage() {
   const [showNewNote, setShowNewNote] = useState(false)
   const [newNoteTitle, setNewNoteTitle] = useState("")
   const [newNoteContent, setNewNoteContent] = useState("")
+  const [loading, setLoading] = useState(true)
   const router = useRouter()
 
   useEffect(() => {
@@ -33,59 +25,100 @@ export default function NotesPage() {
       return
     }
     setCurrentUser(user)
+    loadNotes()
 
-    // Cargar notas del localStorage
-    const savedNotes = localStorage.getItem("loveNotes")
-    if (savedNotes) {
-      setNotes(JSON.parse(savedNotes))
+    // Suscribirse a cambios en tiempo real
+    const subscription = supabase
+      .channel("notes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "notes" }, () => {
+        loadNotes()
+      })
+      .subscribe()
+
+    return () => {
+      subscription.unsubscribe()
     }
   }, [router])
+
+  const loadNotes = async () => {
+    try {
+      const { data, error } = await supabase.from("notes").select("*").order("timestamp", { ascending: false })
+
+      if (error) throw error
+      setNotes(data || [])
+    } catch (error) {
+      console.error("Error loading notes:", error)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const getPartner = (user: string) => {
     return user === "fernanda" ? "heykan" : "fernanda"
   }
 
-  const createNote = () => {
+  const createNote = async () => {
     if (!newNoteTitle.trim() || !newNoteContent.trim()) return
 
-    const note: Note = {
-      id: Date.now().toString(),
-      from: currentUser,
-      to: getPartner(currentUser),
+    const note: Omit<Note, "id" | "created_at"> = {
+      from_user: currentUser,
+      to_user: getPartner(currentUser),
       title: newNoteTitle,
       content: newNoteContent,
-      timestamp: new Date(),
       read: false,
+      timestamp: new Date().toISOString(),
     }
 
-    const updatedNotes = [...notes, note]
-    setNotes(updatedNotes)
-    localStorage.setItem("loveNotes", JSON.stringify(updatedNotes))
+    try {
+      const { error } = await supabase.from("notes").insert([note])
 
-    setNewNoteTitle("")
-    setNewNoteContent("")
-    setShowNewNote(false)
+      if (error) throw error
+
+      setNewNoteTitle("")
+      setNewNoteContent("")
+      setShowNewNote(false)
+    } catch (error) {
+      console.error("Error creating note:", error)
+      alert("Error al crear la nota")
+    }
   }
 
-  const markAsRead = (noteId: string) => {
-    const updatedNotes = notes.map((note) => (note.id === noteId ? { ...note, read: true } : note))
-    setNotes(updatedNotes)
-    localStorage.setItem("loveNotes", JSON.stringify(updatedNotes))
+  const markAsRead = async (noteId: string) => {
+    try {
+      const { error } = await supabase.from("notes").update({ read: true }).eq("id", noteId).eq("to_user", currentUser)
+
+      if (error) throw error
+    } catch (error) {
+      console.error("Error marking note as read:", error)
+    }
   }
 
-  const deleteNote = (noteId: string) => {
-    const updatedNotes = notes.filter((note) => note.id !== noteId)
-    setNotes(updatedNotes)
-    localStorage.setItem("loveNotes", JSON.stringify(updatedNotes))
+  const deleteNote = async (noteId: string) => {
+    try {
+      const { error } = await supabase.from("notes").delete().eq("id", noteId).eq("from_user", currentUser)
+
+      if (error) throw error
+    } catch (error) {
+      console.error("Error deleting note:", error)
+      alert("Error al eliminar la nota")
+    }
   }
 
   // Notas que recibió el usuario actual
-  const receivedNotes = notes.filter((note) => note.to === currentUser)
+  const receivedNotes = notes.filter((note) => note.to_user === currentUser)
   // Notas que envió el usuario actual
-  const sentNotes = notes.filter((note) => note.from === currentUser)
+  const sentNotes = notes.filter((note) => note.from_user === currentUser)
 
   const getUserDisplayName = (user: string) => {
     return user === "fernanda" ? "Fernanda" : "Heykan"
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-black via-purple-900 to-black flex items-center justify-center">
+        <div className="text-white text-lg">Cargando notas... 💜</div>
+      </div>
+    )
   }
 
   return (
@@ -184,7 +217,7 @@ export default function NotesPage() {
                           {note.title}
                           {!note.read && <span className="ml-2 text-purple-400">✨ Nueva</span>}
                         </CardTitle>
-                        <div className="text-purple-300 text-sm">De: {getUserDisplayName(note.from)}</div>
+                        <div className="text-purple-300 text-sm">De: {getUserDisplayName(note.from_user)}</div>
                       </div>
                     </CardHeader>
                     <CardContent>
@@ -242,7 +275,7 @@ export default function NotesPage() {
                     <CardContent>
                       <p className="text-purple-100 mb-4">{note.content}</p>
                       <div className="flex items-center justify-between">
-                        <span className="text-purple-400 text-sm">Para: {getUserDisplayName(note.to)}</span>
+                        <span className="text-purple-400 text-sm">Para: {getUserDisplayName(note.to_user)}</span>
                         <span className="text-purple-400 text-sm">{new Date(note.timestamp).toLocaleDateString()}</span>
                       </div>
                       <div className="mt-2">

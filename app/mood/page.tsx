@@ -6,15 +6,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowLeft, Heart, Smile, Meh } from "lucide-react"
 import { useRouter } from "next/navigation"
-
-interface MoodEntry {
-  id: string
-  user: string
-  mood: "happy" | "love" | "sad" | "excited" | "calm" | "stressed"
-  note: string
-  date: string
-  timestamp: Date
-}
+import { supabase, type MoodEntry } from "@/lib/supabase"
 
 const moodOptions = [
   { value: "happy", emoji: "😊", label: "Feliz", color: "bg-yellow-500" },
@@ -31,6 +23,7 @@ export default function MoodPage() {
   const [selectedMood, setSelectedMood] = useState<string>("")
   const [moodNote, setMoodNote] = useState("")
   const [showAddMood, setShowAddMood] = useState(false)
+  const [loading, setLoading] = useState(true)
   const router = useRouter()
 
   useEffect(() => {
@@ -40,53 +33,80 @@ export default function MoodPage() {
       return
     }
     setCurrentUser(user)
+    loadMoods()
 
-    // Cargar estados de ánimo del localStorage
-    const savedMoods = localStorage.getItem("loveMoods")
-    if (savedMoods) {
-      setMoods(JSON.parse(savedMoods))
+    // Suscribirse a cambios en tiempo real
+    const subscription = supabase
+      .channel("moods")
+      .on("postgres_changes", { event: "*", schema: "public", table: "moods" }, () => {
+        loadMoods()
+      })
+      .subscribe()
+
+    return () => {
+      subscription.unsubscribe()
     }
   }, [router])
 
-  const addMoodEntry = () => {
+  const loadMoods = async () => {
+    try {
+      const { data, error } = await supabase.from("moods").select("*").order("date", { ascending: false })
+
+      if (error) throw error
+      setMoods(data || [])
+    } catch (error) {
+      console.error("Error loading moods:", error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const addMoodEntry = async () => {
     if (!selectedMood) return
 
     const today = new Date().toISOString().split("T")[0]
-    const existingTodayEntry = moods.find((m) => m.user === currentUser && m.date === today)
+    const existingTodayEntry = moods.find((m) => m.username === currentUser && m.date === today)
 
-    if (existingTodayEntry) {
-      // Actualizar entrada existente
-      const updatedMoods = moods.map((m) =>
-        m.id === existingTodayEntry.id
-          ? { ...m, mood: selectedMood as MoodEntry["mood"], note: moodNote, timestamp: new Date() }
-          : m,
-      )
-      setMoods(updatedMoods)
-      localStorage.setItem("loveMoods", JSON.stringify(updatedMoods))
-    } else {
-      // Crear nueva entrada
-      const moodEntry: MoodEntry = {
-        id: Date.now().toString(),
-        user: currentUser,
-        mood: selectedMood as MoodEntry["mood"],
-        note: moodNote,
-        date: today,
-        timestamp: new Date(),
+    try {
+      if (existingTodayEntry) {
+        // Actualizar entrada existente
+        const { error } = await supabase
+          .from("moods")
+          .update({
+            mood: selectedMood,
+            note: moodNote,
+            timestamp: new Date().toISOString(),
+          })
+          .eq("id", existingTodayEntry.id)
+
+        if (error) throw error
+      } else {
+        // Crear nueva entrada
+        const moodEntry: Omit<MoodEntry, "id" | "created_at"> = {
+          username: currentUser,
+          mood: selectedMood,
+          note: moodNote,
+          date: today,
+          timestamp: new Date().toISOString(),
+        }
+
+        const { error } = await supabase.from("moods").insert([moodEntry])
+
+        if (error) throw error
       }
 
-      const updatedMoods = [...moods, moodEntry]
-      setMoods(updatedMoods)
-      localStorage.setItem("loveMoods", JSON.stringify(updatedMoods))
+      setSelectedMood("")
+      setMoodNote("")
+      setShowAddMood(false)
+    } catch (error) {
+      console.error("Error saving mood:", error)
+      alert("Error al guardar el estado de ánimo")
     }
-
-    setSelectedMood("")
-    setMoodNote("")
-    setShowAddMood(false)
   }
 
   const getTodayMood = (user: string) => {
     const today = new Date().toISOString().split("T")[0]
-    return moods.find((m) => m.user === user && m.date === today)
+    return moods.find((m) => m.username === user && m.date === today)
   }
 
   const getUserDisplayName = (user: string) => {
@@ -102,7 +122,7 @@ export default function MoodPage() {
   }
 
   const getRecentMoods = (user: string, days = 7) => {
-    const userMoods = moods.filter((m) => m.user === user)
+    const userMoods = moods.filter((m) => m.username === user)
     return userMoods.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, days)
   }
 
@@ -110,6 +130,14 @@ export default function MoodPage() {
   const partnerTodayMood = getTodayMood(getPartner())
   const myRecentMoods = getRecentMoods(currentUser)
   const partnerRecentMoods = getRecentMoods(getPartner())
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-black via-purple-900 to-black flex items-center justify-center">
+        <div className="text-white text-lg">Cargando estados de ánimo... 💜</div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-black via-purple-900 to-black">

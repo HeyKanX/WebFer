@@ -6,11 +6,14 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowLeft, Heart, Calendar, Clock, Edit } from "lucide-react"
 import { useRouter } from "next/navigation"
+import { supabase, type RelationshipTimer } from "@/lib/supabase"
 
 export default function TimerPage() {
   const [relationshipStart, setRelationshipStart] = useState<Date | null>(null)
   const [isEditing, setIsEditing] = useState(false)
   const [dateInput, setDateInput] = useState("")
+  const [currentUser, setCurrentUser] = useState("")
+  const [loading, setLoading] = useState(true)
   const [timeElapsed, setTimeElapsed] = useState({
     years: 0,
     months: 0,
@@ -27,12 +30,8 @@ export default function TimerPage() {
       router.push("/")
       return
     }
-
-    // Cargar fecha de inicio de la relación
-    const savedDate = localStorage.getItem("relationshipStartDate")
-    if (savedDate) {
-      setRelationshipStart(new Date(savedDate))
-    }
+    setCurrentUser(user)
+    loadRelationshipDate()
   }, [router])
 
   useEffect(() => {
@@ -58,13 +57,52 @@ export default function TimerPage() {
     return () => clearInterval(interval)
   }, [relationshipStart])
 
-  const saveDate = () => {
+  const loadRelationshipDate = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("relationship_timer")
+        .select("*")
+        .order("timestamp", { ascending: false })
+        .limit(1)
+
+      if (error) throw error
+
+      if (data && data.length > 0) {
+        setRelationshipStart(new Date(data[0].start_date))
+      }
+    } catch (error) {
+      console.error("Error loading relationship date:", error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const saveDate = async () => {
     if (!dateInput) return
 
     const date = new Date(dateInput)
-    setRelationshipStart(date)
-    localStorage.setItem("relationshipStartDate", date.toISOString())
-    setIsEditing(false)
+
+    try {
+      // Eliminar fechas anteriores
+      await supabase.from("relationship_timer").delete().neq("id", "")
+
+      // Insertar nueva fecha
+      const timerData: Omit<RelationshipTimer, "id" | "created_at"> = {
+        username: currentUser,
+        start_date: date.toISOString(),
+        timestamp: new Date().toISOString(),
+      }
+
+      const { error } = await supabase.from("relationship_timer").insert([timerData])
+
+      if (error) throw error
+
+      setRelationshipStart(date)
+      setIsEditing(false)
+    } catch (error) {
+      console.error("Error saving date:", error)
+      alert("Error al guardar la fecha")
+    }
   }
 
   const formatDate = (date: Date) => {
@@ -73,6 +111,14 @@ export default function TimerPage() {
       month: "long",
       day: "numeric",
     })
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-black via-purple-900 to-black flex items-center justify-center">
+        <div className="text-white text-lg">Cargando tiempo juntos... 💜</div>
+      </div>
+    )
   }
 
   return (

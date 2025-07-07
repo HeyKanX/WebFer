@@ -1,25 +1,19 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowLeft, Send, Heart } from "lucide-react"
 import { useRouter } from "next/navigation"
-
-interface Message {
-  id: string
-  user: string
-  message: string
-  timestamp: Date
-}
+import { supabase, type Message } from "@/lib/supabase"
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [newMessage, setNewMessage] = useState("")
   const [currentUser, setCurrentUser] = useState("")
+  const [loading, setLoading] = useState(true)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
 
@@ -30,11 +24,19 @@ export default function ChatPage() {
       return
     }
     setCurrentUser(user)
+    loadMessages()
 
-    // Cargar mensajes del localStorage
-    const savedMessages = localStorage.getItem("chatMessages")
-    if (savedMessages) {
-      setMessages(JSON.parse(savedMessages))
+    // Suscribirse a cambios en tiempo real
+    const subscription = supabase
+      .channel("messages")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
+        const newMsg = payload.new as Message
+        setMessages((prev) => [...prev, newMsg])
+      })
+      .subscribe()
+
+    return () => {
+      subscription.unsubscribe()
     }
   }, [router])
 
@@ -42,20 +44,37 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
 
-  const sendMessage = () => {
+  const loadMessages = async () => {
+    try {
+      const { data, error } = await supabase.from("messages").select("*").order("timestamp", { ascending: true })
+
+      if (error) throw error
+      setMessages(data || [])
+    } catch (error) {
+      console.error("Error loading messages:", error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const sendMessage = async () => {
     if (!newMessage.trim()) return
 
-    const message: Message = {
-      id: Date.now().toString(),
-      user: currentUser,
-      message: newMessage,
-      timestamp: new Date(),
+    const message: Omit<Message, "id" | "created_at"> = {
+      username: currentUser,
+      message: newMessage.trim(),
+      timestamp: new Date().toISOString(),
     }
 
-    const updatedMessages = [...messages, message]
-    setMessages(updatedMessages)
-    localStorage.setItem("chatMessages", JSON.stringify(updatedMessages))
-    setNewMessage("")
+    try {
+      const { error } = await supabase.from("messages").insert([message])
+
+      if (error) throw error
+      setNewMessage("")
+    } catch (error) {
+      console.error("Error sending message:", error)
+      alert("Error al enviar mensaje")
+    }
   }
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -66,6 +85,14 @@ export default function ChatPage() {
 
   const getUserDisplayName = (user: string) => {
     return user === "fernanda" ? "Fernanda" : "Heykan"
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-black via-purple-900 to-black flex items-center justify-center">
+        <div className="text-white text-lg">Cargando mensajes... 💜</div>
+      </div>
+    )
   }
 
   return (
@@ -108,15 +135,18 @@ export default function ChatPage() {
                 </div>
               ) : (
                 messages.map((msg) => (
-                  <div key={msg.id} className={`flex ${msg.user === currentUser ? "justify-end" : "justify-start"}`}>
+                  <div
+                    key={msg.id}
+                    className={`flex ${msg.username === currentUser ? "justify-end" : "justify-start"}`}
+                  >
                     <div
                       className={`max-w-[85%] sm:max-w-xs lg:max-w-md px-3 sm:px-4 py-2 rounded-lg ${
-                        msg.user === currentUser
+                        msg.username === currentUser
                           ? "bg-purple-600 text-white"
                           : "bg-purple-900/50 text-purple-100 border border-purple-500/30"
                       }`}
                     >
-                      <div className="text-xs opacity-70 mb-1">{getUserDisplayName(msg.user)}</div>
+                      <div className="text-xs opacity-70 mb-1">{getUserDisplayName(msg.username)}</div>
                       <div className="text-sm sm:text-base break-words">{msg.message}</div>
                       <div className="text-xs opacity-50 mt-1">{new Date(msg.timestamp).toLocaleTimeString()}</div>
                     </div>

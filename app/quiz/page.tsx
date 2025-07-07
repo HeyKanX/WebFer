@@ -7,15 +7,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowLeft, Plus, User, Heart, Trophy, Trash2 } from "lucide-react"
 import { useRouter } from "next/navigation"
-
-interface Question {
-  id: string
-  question: string
-  answer: string
-  createdBy: string
-  attempts: number
-  correctGuesses: number
-}
+import { supabase, type Question } from "@/lib/supabase"
 
 interface GameSession {
   questionId: string
@@ -32,6 +24,7 @@ export default function QuizPage() {
   const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null)
   const [userAnswer, setUserAnswer] = useState("")
   const [gameResults, setGameResults] = useState<GameSession[]>([])
+  const [loading, setLoading] = useState(true)
   const [newQuestion, setNewQuestion] = useState({ question: "", answer: "" })
   const router = useRouter()
 
@@ -42,42 +35,72 @@ export default function QuizPage() {
       return
     }
     setCurrentUser(user)
+    loadQuestions()
 
-    // Cargar preguntas del localStorage
-    const savedQuestions = localStorage.getItem("loveQuestions")
-    if (savedQuestions) {
-      setQuestions(JSON.parse(savedQuestions))
+    // Suscribirse a cambios en tiempo real
+    const subscription = supabase
+      .channel("questions")
+      .on("postgres_changes", { event: "*", schema: "public", table: "questions" }, () => {
+        loadQuestions()
+      })
+      .subscribe()
+
+    return () => {
+      subscription.unsubscribe()
     }
   }, [router])
 
-  const addQuestion = () => {
-    if (!newQuestion.question.trim() || !newQuestion.answer.trim()) return
+  const loadQuestions = async () => {
+    try {
+      const { data, error } = await supabase.from("questions").select("*").order("timestamp", { ascending: false })
 
-    const question: Question = {
-      id: Date.now().toString(),
-      question: newQuestion.question,
-      answer: newQuestion.answer,
-      createdBy: currentUser,
-      attempts: 0,
-      correctGuesses: 0,
+      if (error) throw error
+      setQuestions(data || [])
+    } catch (error) {
+      console.error("Error loading questions:", error)
+    } finally {
+      setLoading(false)
     }
-
-    const updatedQuestions = [...questions, question]
-    setQuestions(updatedQuestions)
-    localStorage.setItem("loveQuestions", JSON.stringify(updatedQuestions))
-
-    setNewQuestion({ question: "", answer: "" })
-    setShowAddQuestion(false)
   }
 
-  const deleteQuestion = (questionId: string) => {
-    const updatedQuestions = questions.filter((q) => q.id !== questionId)
-    setQuestions(updatedQuestions)
-    localStorage.setItem("loveQuestions", JSON.stringify(updatedQuestions))
+  const addQuestion = async () => {
+    if (!newQuestion.question.trim() || !newQuestion.answer.trim()) return
+
+    const question: Omit<Question, "id" | "created_at"> = {
+      question: newQuestion.question,
+      answer: newQuestion.answer,
+      created_by: currentUser,
+      attempts: 0,
+      correct_guesses: 0,
+      timestamp: new Date().toISOString(),
+    }
+
+    try {
+      const { error } = await supabase.from("questions").insert([question])
+
+      if (error) throw error
+
+      setNewQuestion({ question: "", answer: "" })
+      setShowAddQuestion(false)
+    } catch (error) {
+      console.error("Error adding question:", error)
+      alert("Error al agregar pregunta")
+    }
+  }
+
+  const deleteQuestion = async (questionId: string) => {
+    try {
+      const { error } = await supabase.from("questions").delete().eq("id", questionId).eq("created_by", currentUser)
+
+      if (error) throw error
+    } catch (error) {
+      console.error("Error deleting question:", error)
+      alert("Error al eliminar pregunta")
+    }
   }
 
   const startGame = () => {
-    const partnerQuestions = questions.filter((q) => q.createdBy !== currentUser)
+    const partnerQuestions = questions.filter((q) => q.created_by !== currentUser)
     if (partnerQuestions.length === 0) {
       alert("Tu pareja aún no ha creado preguntas para ti")
       return
@@ -89,19 +112,25 @@ export default function QuizPage() {
     setUserAnswer("")
   }
 
-  const submitAnswer = () => {
+  const submitAnswer = async () => {
     if (!currentQuestion || !userAnswer.trim()) return
 
     const isCorrect = userAnswer.toLowerCase().trim() === currentQuestion.answer.toLowerCase().trim()
 
     // Actualizar estadísticas de la pregunta
-    const updatedQuestions = questions.map((q) =>
-      q.id === currentQuestion.id
-        ? { ...q, attempts: q.attempts + 1, correctGuesses: q.correctGuesses + (isCorrect ? 1 : 0) }
-        : q,
-    )
-    setQuestions(updatedQuestions)
-    localStorage.setItem("loveQuestions", JSON.stringify(updatedQuestions))
+    try {
+      const { error } = await supabase
+        .from("questions")
+        .update({
+          attempts: currentQuestion.attempts + 1,
+          correct_guesses: currentQuestion.correct_guesses + (isCorrect ? 1 : 0),
+        })
+        .eq("id", currentQuestion.id)
+
+      if (error) throw error
+    } catch (error) {
+      console.error("Error updating question stats:", error)
+    }
 
     // Guardar resultado del juego
     const session: GameSession = {
@@ -130,8 +159,16 @@ export default function QuizPage() {
     return currentUser === "fernanda" ? "Heykan" : "Fernanda"
   }
 
-  const myQuestions = questions.filter((q) => q.createdBy === currentUser)
-  const partnerQuestions = questions.filter((q) => q.createdBy !== currentUser)
+  const myQuestions = questions.filter((q) => q.created_by === currentUser)
+  const partnerQuestions = questions.filter((q) => q.created_by !== currentUser)
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-black via-purple-900 to-black flex items-center justify-center">
+        <div className="text-white text-lg">Cargando preguntas... 💜</div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-black via-purple-900 to-black">
@@ -269,10 +306,10 @@ export default function QuizPage() {
                             <h3 className="font-bold text-white mb-2">{q.question}</h3>
                             <p className="text-purple-200 mb-2">Respuesta: {q.answer}</p>
                             <div className="text-sm text-purple-300">
-                              Intentos: {q.attempts} | Aciertos: {q.correctGuesses}
+                              Intentos: {q.attempts} | Aciertos: {q.correct_guesses}
                               {q.attempts > 0 && (
                                 <span className="ml-2">
-                                  ({Math.round((q.correctGuesses / q.attempts) * 100)}% de acierto)
+                                  ({Math.round((q.correct_guesses / q.attempts) * 100)}% de acierto)
                                 </span>
                               )}
                             </div>
@@ -301,7 +338,7 @@ export default function QuizPage() {
             <Card className="bg-black/50 border-purple-500/30 backdrop-blur-sm">
               <CardHeader>
                 <CardTitle className="text-white text-center text-2xl">
-                  Pregunta de {getUserDisplayName(currentQuestion.createdBy)}
+                  Pregunta de {getUserDisplayName(currentQuestion.created_by)}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">
