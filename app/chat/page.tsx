@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowLeft, Send, Heart } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { supabase, type Message } from "@/lib/supabase"
+import { supabase, type Message, formatTimePeru } from "@/lib/supabase"
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
@@ -148,7 +148,7 @@ export default function ChatPage() {
                     >
                       <div className="text-xs opacity-70 mb-1">{getUserDisplayName(msg.username)}</div>
                       <div className="text-sm sm:text-base break-words">{msg.message}</div>
-                      <div className="text-xs opacity-50 mt-1">{new Date(msg.timestamp).toLocaleTimeString()}</div>
+                      <div className="text-xs opacity-50 mt-1">{formatTimePeru(msg.timestamp)}</div>
                     </div>
                   </div>
                 ))

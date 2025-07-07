@@ -5,13 +5,14 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { ArrowLeft, Plus, User, Heart, Trophy, Trash2 } from "lucide-react"
+import { ArrowLeft, Plus, User, Heart, Trophy, Trash2, X } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { supabase, type Question } from "@/lib/supabase"
+import { supabase, type Question, type QuestionAlternative, formatDatePeru } from "@/lib/supabase"
 
 interface GameSession {
   questionId: string
   userAnswer: string
+  correctAnswer: string
   isCorrect: boolean
   timestamp: Date
 }
@@ -22,10 +23,19 @@ export default function QuizPage() {
   const [showAddQuestion, setShowAddQuestion] = useState(false)
   const [gameMode, setGameMode] = useState<"menu" | "playing" | "results">("menu")
   const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null)
-  const [userAnswer, setUserAnswer] = useState("")
+  const [selectedAnswer, setSelectedAnswer] = useState<string>("")
   const [gameResults, setGameResults] = useState<GameSession[]>([])
   const [loading, setLoading] = useState(true)
-  const [newQuestion, setNewQuestion] = useState({ question: "", answer: "" })
+  const [newQuestion, setNewQuestion] = useState({
+    question: "",
+    alternatives: [
+      { id: "a", text: "" },
+      { id: "b", text: "" },
+      { id: "c", text: "" },
+      { id: "d", text: "" },
+    ] as QuestionAlternative[],
+    correctAnswerId: "a",
+  })
   const router = useRouter()
 
   useEffect(() => {
@@ -64,11 +74,27 @@ export default function QuizPage() {
   }
 
   const addQuestion = async () => {
-    if (!newQuestion.question.trim() || !newQuestion.answer.trim()) return
+    if (!newQuestion.question.trim()) return
+
+    // Verificar que al menos 2 alternativas tengan texto
+    const validAlternatives = newQuestion.alternatives.filter((alt) => alt.text.trim())
+    if (validAlternatives.length < 2) {
+      alert("Debes agregar al menos 2 alternativas")
+      return
+    }
+
+    // Verificar que la respuesta correcta tenga texto
+    const correctAlternative = newQuestion.alternatives.find((alt) => alt.id === newQuestion.correctAnswerId)
+    if (!correctAlternative?.text.trim()) {
+      alert("La alternativa marcada como correcta debe tener texto")
+      return
+    }
 
     const question: Omit<Question, "id" | "created_at"> = {
       question: newQuestion.question,
-      answer: newQuestion.answer,
+      answer: correctAlternative.text, // Para compatibilidad
+      alternatives: validAlternatives,
+      correct_answer_id: newQuestion.correctAnswerId,
       created_by: currentUser,
       attempts: 0,
       correct_guesses: 0,
@@ -80,7 +106,16 @@ export default function QuizPage() {
 
       if (error) throw error
 
-      setNewQuestion({ question: "", answer: "" })
+      setNewQuestion({
+        question: "",
+        alternatives: [
+          { id: "a", text: "" },
+          { id: "b", text: "" },
+          { id: "c", text: "" },
+          { id: "d", text: "" },
+        ],
+        correctAnswerId: "a",
+      })
       setShowAddQuestion(false)
     } catch (error) {
       console.error("Error adding question:", error)
@@ -109,13 +144,15 @@ export default function QuizPage() {
     const randomQuestion = partnerQuestions[Math.floor(Math.random() * partnerQuestions.length)]
     setCurrentQuestion(randomQuestion)
     setGameMode("playing")
-    setUserAnswer("")
+    setSelectedAnswer("")
   }
 
   const submitAnswer = async () => {
-    if (!currentQuestion || !userAnswer.trim()) return
+    if (!currentQuestion || !selectedAnswer) return
 
-    const isCorrect = userAnswer.toLowerCase().trim() === currentQuestion.answer.toLowerCase().trim()
+    const isCorrect = selectedAnswer === currentQuestion.correct_answer_id
+    const correctAlternative = currentQuestion.alternatives.find((alt) => alt.id === currentQuestion.correct_answer_id)
+    const selectedAlternative = currentQuestion.alternatives.find((alt) => alt.id === selectedAnswer)
 
     // Actualizar estadísticas de la pregunta
     try {
@@ -135,7 +172,8 @@ export default function QuizPage() {
     // Guardar resultado del juego
     const session: GameSession = {
       questionId: currentQuestion.id,
-      userAnswer,
+      userAnswer: selectedAlternative?.text || "",
+      correctAnswer: correctAlternative?.text || "",
       isCorrect,
       timestamp: new Date(),
     }
@@ -148,7 +186,7 @@ export default function QuizPage() {
   const playAgain = () => {
     setGameMode("menu")
     setCurrentQuestion(null)
-    setUserAnswer("")
+    setSelectedAnswer("")
   }
 
   const getUserDisplayName = (user: string) => {
@@ -157,6 +195,12 @@ export default function QuizPage() {
 
   const getPartnerName = () => {
     return currentUser === "fernanda" ? "Heykan" : "Fernanda"
+  }
+
+  const updateAlternative = (index: number, text: string) => {
+    const updatedAlternatives = [...newQuestion.alternatives]
+    updatedAlternatives[index].text = text
+    setNewQuestion({ ...newQuestion, alternatives: updatedAlternatives })
   }
 
   const myQuestions = questions.filter((q) => q.created_by === currentUser)
@@ -203,11 +247,21 @@ export default function QuizPage() {
         {/* Add Question Modal */}
         {showAddQuestion && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <Card className="w-full max-w-md bg-black/80 border-purple-500/30">
+            <Card className="w-full max-w-2xl bg-black/80 border-purple-500/30 max-h-[90vh] overflow-y-auto">
               <CardHeader>
-                <CardTitle className="text-white">Nueva Pregunta 🤔</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-white">Nueva Pregunta con Alternativas 🤔</CardTitle>
+                  <Button
+                    onClick={() => setShowAddQuestion(false)}
+                    variant="ghost"
+                    size="sm"
+                    className="text-purple-200 hover:text-white"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-6">
                 <Textarea
                   placeholder="Escribe una pregunta sobre ti..."
                   value={newQuestion.question}
@@ -215,15 +269,40 @@ export default function QuizPage() {
                   rows={3}
                   className="bg-purple-900/30 border-purple-500/50 text-white placeholder:text-purple-300"
                 />
-                <Input
-                  placeholder="La respuesta correcta"
-                  value={newQuestion.answer}
-                  onChange={(e) => setNewQuestion({ ...newQuestion, answer: e.target.value })}
-                  className="bg-purple-900/30 border-purple-500/50 text-white placeholder:text-purple-300"
-                />
+
+                <div>
+                  <h3 className="text-white font-bold mb-4">Alternativas de respuesta:</h3>
+                  <div className="space-y-3">
+                    {newQuestion.alternatives.map((alternative, index) => (
+                      <div key={alternative.id} className="flex items-center space-x-3">
+                        <input
+                          type="radio"
+                          name="correctAnswer"
+                          value={alternative.id}
+                          checked={newQuestion.correctAnswerId === alternative.id}
+                          onChange={(e) => setNewQuestion({ ...newQuestion, correctAnswerId: e.target.value })}
+                          className="w-4 h-4 text-purple-600"
+                        />
+                        <div className="flex-1">
+                          <Input
+                            placeholder={`Alternativa ${alternative.id.toUpperCase()}`}
+                            value={alternative.text}
+                            onChange={(e) => updateAlternative(index, e.target.value)}
+                            className="bg-purple-900/30 border-purple-500/50 text-white placeholder:text-purple-300"
+                          />
+                        </div>
+                        <span className="text-purple-300 text-sm w-8">{alternative.id.toUpperCase()}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-purple-300 text-sm mt-2">
+                    💡 Marca con el círculo cuál es la respuesta correcta. Puedes dejar alternativas vacías.
+                  </p>
+                </div>
+
                 <div className="flex space-x-2">
                   <Button onClick={addQuestion} className="flex-1 bg-purple-600 hover:bg-purple-700">
-                    Agregar 💜
+                    Agregar Pregunta 💜
                   </Button>
                   <Button
                     onClick={() => setShowAddQuestion(false)}
@@ -243,7 +322,9 @@ export default function QuizPage() {
           <div className="space-y-8">
             <div className="text-center">
               <h2 className="text-4xl font-bold text-white mb-4">🎯 ¿Qué tanto nos conocemos? 🎯</h2>
-              <p className="text-purple-200 text-lg">Crea preguntas sobre ti y adivina las respuestas de tu pareja</p>
+              <p className="text-purple-200 text-lg">
+                Crea preguntas con alternativas múltiples y adivina las respuestas de tu pareja
+              </p>
             </div>
 
             {/* Game Stats */}
@@ -303,8 +384,24 @@ export default function QuizPage() {
                       <div key={q.id} className="p-4 bg-purple-900/20 rounded-lg border border-purple-500/20">
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
-                            <h3 className="font-bold text-white mb-2">{q.question}</h3>
-                            <p className="text-purple-200 mb-2">Respuesta: {q.answer}</p>
+                            <h3 className="font-bold text-white mb-3">{q.question}</h3>
+                            <div className="space-y-2 mb-3">
+                              {q.alternatives?.map((alt) => (
+                                <div key={alt.id} className="flex items-center space-x-2">
+                                  <span
+                                    className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                                      alt.id === q.correct_answer_id
+                                        ? "bg-green-500 text-white"
+                                        : "bg-purple-700 text-purple-200"
+                                    }`}
+                                  >
+                                    {alt.id.toUpperCase()}
+                                  </span>
+                                  <span className="text-purple-200">{alt.text}</span>
+                                  {alt.id === q.correct_answer_id && <span className="text-green-400">✓</span>}
+                                </div>
+                              ))}
+                            </div>
                             <div className="text-sm text-purple-300">
                               Intentos: {q.attempts} | Aciertos: {q.correct_guesses}
                               {q.attempts > 0 && (
@@ -313,6 +410,7 @@ export default function QuizPage() {
                                 </span>
                               )}
                             </div>
+                            <div className="text-xs text-purple-400 mt-1">Creada: {formatDatePeru(q.timestamp)}</div>
                           </div>
                           <Button
                             onClick={() => deleteQuestion(q.id)}
@@ -346,19 +444,29 @@ export default function QuizPage() {
                   <div className="text-6xl mb-4">🤔</div>
                   <h3 className="text-xl text-white mb-6">{currentQuestion.question}</h3>
 
-                  <Input
-                    placeholder="Tu respuesta..."
-                    value={userAnswer}
-                    onChange={(e) => setUserAnswer(e.target.value)}
-                    onKeyPress={(e) => e.key === "Enter" && submitAnswer()}
-                    className="bg-purple-900/30 border-purple-500/50 text-white placeholder:text-purple-300 text-center text-lg"
-                  />
+                  <div className="space-y-3">
+                    {currentQuestion.alternatives?.map((alternative) => (
+                      <Button
+                        key={alternative.id}
+                        onClick={() => setSelectedAnswer(alternative.id)}
+                        variant={selectedAnswer === alternative.id ? "default" : "outline"}
+                        className={`w-full p-4 text-left justify-start ${
+                          selectedAnswer === alternative.id
+                            ? "bg-purple-600 text-white"
+                            : "border-purple-500/50 text-purple-200 hover:bg-purple-900/30 bg-transparent"
+                        }`}
+                      >
+                        <span className="font-bold mr-3">{alternative.id.toUpperCase()})</span>
+                        {alternative.text}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="flex space-x-4">
                   <Button
                     onClick={submitAnswer}
-                    disabled={!userAnswer.trim()}
+                    disabled={!selectedAnswer}
                     className="flex-1 bg-purple-600 hover:bg-purple-700 text-lg py-3"
                   >
                     Responder 💜
@@ -389,16 +497,35 @@ export default function QuizPage() {
                 <div>
                   <h3 className="text-lg text-white mb-4">{currentQuestion.question}</h3>
 
-                  <div className="space-y-2">
-                    <div className="p-3 bg-purple-900/30 rounded-lg">
-                      <span className="text-purple-200">Tu respuesta: </span>
-                      <span className="text-white font-bold">{userAnswer}</span>
-                    </div>
+                  <div className="space-y-3">
+                    {currentQuestion.alternatives?.map((alternative) => {
+                      const isSelected = selectedAnswer === alternative.id
+                      const isCorrect = alternative.id === currentQuestion.correct_answer_id
 
-                    <div className="p-3 bg-green-900/30 rounded-lg border border-green-500/30">
-                      <span className="text-green-200">Respuesta correcta: </span>
-                      <span className="text-white font-bold">{currentQuestion.answer}</span>
-                    </div>
+                      return (
+                        <div
+                          key={alternative.id}
+                          className={`p-3 rounded-lg border ${
+                            isCorrect
+                              ? "bg-green-900/30 border-green-500/50 text-green-200"
+                              : isSelected
+                                ? "bg-red-900/30 border-red-500/50 text-red-200"
+                                : "bg-purple-900/20 border-purple-500/20 text-purple-300"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <span className="font-bold">{alternative.id.toUpperCase()})</span>
+                              <span>{alternative.text}</span>
+                            </div>
+                            <div className="flex space-x-2">
+                              {isCorrect && <span className="text-green-400">✓ Correcta</span>}
+                              {isSelected && !isCorrect && <span className="text-red-400">Tu respuesta</span>}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
 

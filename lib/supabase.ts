@@ -9,6 +9,43 @@ if (!supabaseUrl || !supabaseKey) {
 
 export const supabase = createClient(supabaseUrl, supabaseKey)
 
+// Función para formatear fechas en zona horaria de Perú
+export const formatDatePeru = (dateString: string, includeTime = true) => {
+  const date = new Date(dateString)
+  const options: Intl.DateTimeFormatOptions = {
+    timeZone: "America/Lima", // Zona horaria de Perú
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    ...(includeTime && {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }),
+  }
+  return date.toLocaleString("es-PE", options)
+}
+
+export const formatTimePeru = (dateString: string) => {
+  const date = new Date(dateString)
+  return date.toLocaleTimeString("es-PE", {
+    timeZone: "America/Lima",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  })
+}
+
+export const formatDateOnlyPeru = (dateString: string) => {
+  const date = new Date(dateString)
+  return date.toLocaleDateString("es-PE", {
+    timeZone: "America/Lima",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  })
+}
+
 // Tipos para la base de datos
 export interface Message {
   id: string
@@ -63,10 +100,17 @@ export interface Event {
   created_at?: string
 }
 
+export interface QuestionAlternative {
+  id: string
+  text: string
+}
+
 export interface Question {
   id: string
   question: string
-  answer: string
+  answer: string // Mantener para compatibilidad
+  alternatives: QuestionAlternative[]
+  correct_answer_id: string
   created_by: string
   attempts: number
   correct_guesses: number
